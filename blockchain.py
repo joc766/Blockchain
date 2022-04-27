@@ -256,7 +256,7 @@ class Blockchain():
             return False
         # (Part 3) check: something to do with the mining transaction (check that mining transaction is the last one)
         txns = block['transactions']
-        if len(txns) != 0 and not txns[-1]['metadata']['mined']:
+        if len(txns) == 0 or not txns[-1]['metadata']['mined']:
             return False
         return True
 
@@ -310,9 +310,16 @@ class Blockchain():
                     # Not very efficient, but reset the wallet every time
                     self.wallet = []
                     # in order traversal
-                    indices = [b['header']['index'] for b in chain]
+                    chain.reverse()
+                    indices = [int(b['header']['index']) for b in chain]
                     for i in indices:
-                        curr = chain[i]
+                        try:
+                            curr = chain[i]
+                        except IndexError:
+                            # was getting strange error before, fixed now
+                            print(chain_len)
+                            for b in chain: print("{}, ".format(b['header']['index']), end=None)
+                            continue
                         for t in curr['transactions']:
                             # if curr is the recipient then add it to the wallet
                             if str(t['data']['recipient']) == self.verify_key:
@@ -320,7 +327,13 @@ class Blockchain():
                                 self.wallet.append(coin)
                             # if curr is the sender then get rid of the coin from wallet
                             elif t['metadata']['sender'] and int(t['metadata']['sender']) == self.port:
-                                self.wallet.remove(t)
+                                # remove the previous transaction
+                                prev_txn_block = chain[t['metadata']['prev_txn_index']]
+                                prev_txn_hash = t['data']['digest']
+                                for t in prev_txn_block['transactions']: 
+                                    if prev_txn_hash == self.hash_txn(t['data']['recipient'], t['data']['digest'], t['data']['signature']):
+                                        self.wallet.remove(t)
+                                        break
                     
                     
                     
@@ -338,31 +351,38 @@ class Blockchain():
         ## to them.
         ##
         ## Whether a transaction is added to it or not, returns `txns`.
-        # if len(self.wallet) > 0:
-        #     old_digest = self.wallet.pop()
+        if len(self.wallet) > 0:
+            dest = ((self.port - 8000 + 1) % NNODES) + 8000 # send to "neighbor"
+            prev_txn = self.wallet[0]
             
-        #     # find old_txn's blockchain index
-        #     for digest in self.blocks.keys():
-        #         block = self.blocks[digest]
-        #         try:
-        #             prev_txn_index = block['transactions'].index(old_digest)
-        #             break
-        #         except ValueError:
-        #             pass
-        #     txn = {
-        #         # this metadata is not usually part of the transaction, but
-        #         # we include to simplify a few tasks for this toy implementation
-        #         'metadata' : {
-        #             'mined' :          False, # a boolean indicating whether it is a mining transaction
-        #             'sender' :         self.port, # the name (self.port) of the node which created the transaction
-        #             'prev_txn_index' : , # the index of the preceeding transaction, for easy reference
-        #         },
-        #         'data' : {
-        #             'signature' : None, # a digital signature certifying that the sender has sent the recipient the coin
-        #             'recipient' : None, # the public key of the recipient
-        #             'digest':     None, # the digest (hash) of the preceeding transaction
-        #         }
-        #     }
+            # find old_txn's blockchain index
+            for digest in self.blocks.keys():
+                block = self.blocks[digest]
+                try:
+                    # for effeciency, might be faster to check a hash maybe do this later
+                    block['transactions'].index(prev_txn) # raises ValueError when value is missing
+                except ValueError:
+                    continue
+                else:
+                    prev_index = block['header']['index']
+                    break
+            
+            # should be able to find the prev transaction location
+            txn = {
+                # this metadata is not usually part of the transaction, but
+                # we include to simplify a few tasks for this toy implementation
+                'metadata' : {
+                    'mined' :          False, # a boolean indicating whether it is a mining transaction
+                    'sender' :         self.port, # the name (self.port) of the node which created the transaction
+                    'prev_txn_index' : prev_index, # the index of the preceeding transaction, for easy reference
+                },
+                'data' : {
+                    'signature' : self.sign(self.hash_txn_with_recipient(prev_txn, dest)), # a digital signature certifying that the sender has sent the recipient the coin
+                    'recipient' : dest, # the public key of the recipient
+                    'digest':     self.hash_txn(prev_txn['data']['recipient'], prev_txn['data']['digest'], prev_txn['data']['signature']), # the digest (hash) of the preceeding transaction
+                }
+            }
+            txns.append(txn)
         # should use the function hash_txn_with_recipient()
         return txns
 
@@ -400,7 +420,7 @@ class Blockchain():
                     time.sleep( 3 )
                     pp = pprint.PrettyPrinter()
                     pp.pprint( self.blocks )
-                    
+                
                     for i, coin in enumerate(self.wallet):
                         print("{}: {}".format(i, coin))
 
