@@ -8,6 +8,7 @@ import json
 import pprint
 import sys
 from queue import Queue, Empty # added Empty exception
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
@@ -95,7 +96,17 @@ class Blockchain():
         self.pending.put( payload[ 'digest' ] )
 
         return ( payload[ 'block' ], payload[ 'digest' ] )
-
+    
+    # makes things cleaner. Outputs a list in order of the chain
+    def get_chain( self, start=None ):
+        if start is None:
+            start = self.head
+        chain = []
+        curr = self.blocks.get(start)
+        while curr is not None:
+            chain.insert(0, curr)
+            curr = self.blocks.get(curr['header']['parent'])
+        return chain
 
     # TODO
     def verify_last_txn( self ):
@@ -117,12 +128,50 @@ class Blockchain():
         ## recipient, and block index, if it exists, in the following format on a new line:
         ## '\nverified last non-mining trasaction: {sender} sent {receipient} a coin in block indexed {index}'.
         ## If it does not exist, print '\nno mining transactions occurred...'
-        curr = self.blocks.get(self.head)
-        while curr:
-            for t in curr['transactions']:
-                if not t['metadata']['mined']:
-                    pass
-        pass
+        chain = self.get_chain()
+        chain.reverse() # reverse so iterate from head to genesis
+        last_txn = None
+        for block in chain:
+            for txn in block['transactions']:
+                if not txn['metadata']['mined']: # TODO put verify back
+                    last_txn = txn
+                    last_txn_block_index = block['header']['index']
+                    break
+            if last_txn is not None:
+                break
+        chain.reverse() # reverse again so the indices are valid
+        
+        # Now we have a non-mining transaction
+        curr_txn = last_txn
+        if last_txn is None:
+            print('\nno mining transactions occurred...')
+            return
+        try:
+            while curr_txn is not None:
+                prev_txn = None
+                prev_block = chain[curr_txn['metadata']['prev_txn_index']]
+                for txn in prev_block['transactions']:
+                    if txn['data']['digest'] == self.hash_txn(curr_txn['data']['recipient'], curr_txn['data']['digest'], curr_txn['data']['signature']):
+                        #TODO restore verify check
+                        prev_txn = txn
+                        break
+                else:
+                    curr_txn = prev_txn
+        except ValueError as e:
+            print(e)
+            print('\nno mining transactions occurred...')
+        else:
+            sender = self.lookup_key(last_txn['metadata']['sender'])
+            recipient = last_txn['data']['recipient']
+            index = last_txn_block_index
+            print(f'\nverified last non-mining trasaction: {sender} sent {recipient} a coin in block indexed {index}')
+        
+            
+                
+                
+        
+        
+
 
 
     # helper functions for TODOs
@@ -334,10 +383,7 @@ class Blockchain():
                                     if prev_txn_hash == self.hash_txn(t['data']['recipient'], t['data']['digest'], t['data']['signature']):
                                         self.wallet.remove(t)
                                         break
-                    
-                    
-                    
-
+            self.pending.task_done()
 
     # TODO
     def gift_coin( self, txns ):
@@ -352,15 +398,16 @@ class Blockchain():
         ##
         ## Whether a transaction is added to it or not, returns `txns`.
         if len(self.wallet) > 0:
-            dest = ((self.port - 8000 + 1) % NNODES) + 8000 # send to "neighbor"
-            prev_txn = self.wallet[0]
+            peers_list = list(self.peers.keys())
+            i = peers_list.index(self.port)
+            dest = peers_list[ (i + 1) % len(peers_list) ]
+            prev_txn = self.wallet[0] # this is the one we're sending
             
             # find old_txn's blockchain index
             for digest in self.blocks.keys():
                 block = self.blocks[digest]
                 try:
-                    # for effeciency, might be faster to check a hash maybe do this later
-                    block['transactions'].index(prev_txn) # raises ValueError when value is missing
+                    block['transactions'].index(prev_txn)
                 except ValueError:
                     continue
                 else:
@@ -398,7 +445,7 @@ class Blockchain():
             sender_pk = self.lookup_key(txn['metadata']['sender'])
             self.verify(sender_pk, txn['data']['digest'], txn['data']['signature'])
             return True
-        except sender_pk.InvalidSignature:
+        except InvalidSignature:
             return False
 
 
@@ -421,11 +468,9 @@ class Blockchain():
                     pp = pprint.PrettyPrinter()
                     pp.pprint( self.blocks )
                 
-                    for i, coin in enumerate(self.wallet):
-                        print("{}: {}".format(i, coin))
 
                     ## TODO: UNCOMMENT FOR PART 3
-                    # self.verify_last_txn()
+                    self.verify_last_txn()
 
                 return
 
