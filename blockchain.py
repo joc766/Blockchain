@@ -109,14 +109,6 @@ class Blockchain():
         ## head looking for non-mining transactions. Make sure to run `verify_txn`
         ## and raise any exceptions that might be caused by `lookup_key`, a function you
         ## should have used in `verify_txn`.
-        curr = self.blocks.get(self.head)
-        while curr:
-            for t in curr['txns']:
-                if not t['metadata']['mined']:
-                    
-                
-            
-            
         ## Once a non-mining transaction is found, continue traversing
         ## through its links by utilizing metadata such as prev_txn_index
         ## in order to fully verify the transaction.
@@ -125,6 +117,11 @@ class Blockchain():
         ## recipient, and block index, if it exists, in the following format on a new line:
         ## '\nverified last non-mining trasaction: {sender} sent {receipient} a coin in block indexed {index}'.
         ## If it does not exist, print '\nno mining transactions occurred...'
+        curr = self.blocks.get(self.head)
+        while curr:
+            for t in curr['transactions']:
+                if not t['metadata']['mined']:
+                    pass
         pass
 
 
@@ -199,8 +196,8 @@ class Blockchain():
             # we include to simplify a few tasks for this toy implementation
             'metadata' : {
                 'mined' :          True, # a boolean indicating whether it is a mining transaction
-                'sender' :         self.port, # the name (self.port) of the node which created the transaction
-                'prev_txn_index' : len(txns) - 1 if txns else None, # the index of the preceeding transaction, for easy reference
+                'sender' :         None, # the name (self.port) of the node which created the transaction
+                'prev_txn_index' : None, # the index of the preceeding transaction, for easy reference
             },
             'data' : {
                 'signature' : None, # a digital signature certifying that the sender has sent the recipient the coin
@@ -254,8 +251,8 @@ class Blockchain():
         # check: something to do with the parent (make sure it's not the genesis block and then check if the parent block exists)
         if prev_block and block['header']['parent'] not in self.blocks.keys():
             return False
-        # check: something to do with the parent/index (the block's index is > its parent's index i.e. block is in order)
-        if prev_block and block['header']['index'] <= prev_block['header']['index']:
+        # check: something to do with the parent/index (the block's index is > its parent's index i.e. block is in order. Going to go extra and force the block to have an index exactly 1 greater)
+        if prev_block and block['header']['index'] != prev_block['header']['index'] + 1:
             return False
         # (Part 3) check: something to do with the mining transaction (check that mining transaction is the last one)
         txns = block['transactions']
@@ -300,28 +297,30 @@ class Blockchain():
                 curr = block
                 # can change back later to no longer use parent reference
                 parent = self.blocks.get(curr['header']['parent'])
+                chain = [curr]
                 while parent is not None:
                     chain_len += 1
                     curr = parent
                     parent = self.blocks.get(curr['header']['parent'])
+                    chain.append(curr)
                 if chain_len > self.length:
-                    old_head = self.head
                     self.head = digest
                     self.length = chain_len
                     # Now update the wallet
-                    # old head contains the previous head; go back to their intersection
-                    curr = self.blocks.get(self.head)
-                    while curr and curr != old_head:
+                    # Not very efficient, but reset the wallet every time
+                    self.wallet = []
+                    # in order traversal
+                    indices = [b['header']['index'] for b in chain]
+                    for i in indices:
+                        curr = chain[i]
                         for t in curr['transactions']:
                             # if curr is the recipient then add it to the wallet
-                            if t['data']['recipient'] == self.verify_key:
-                                coin = self.hash_txn(t['data']['recipient'], t['data']['digest'], t['data']['signature'])
+                            if str(t['data']['recipient']) == self.verify_key:
+                                coin = t
                                 self.wallet.append(coin)
                             # if curr is the sender then get rid of the coin from wallet
-                            elif t['metadata']['sender'] == self.port:
-                                self.wallet.remove(t['data']['digest'])
-                        # increment
-                        curr = self.blocks.get(curr['header']['parent'])
+                            elif t['metadata']['sender'] and int(t['metadata']['sender']) == self.port:
+                                self.wallet.remove(t)
                     
                     
                     
@@ -339,22 +338,31 @@ class Blockchain():
         ## to them.
         ##
         ## Whether a transaction is added to it or not, returns `txns`.
-
-        
-        txn = {
-            # this metadata is not usually part of the transaction, but
-            # we include to simplify a few tasks for this toy implementation
-            'metadata' : {
-                'mined' :          None, # a boolean indicating whether it is a mining transaction
-                'sender' :         None, # the name (self.port) of the node which created the transaction
-                'prev_txn_index' : None, # the index of the preceeding transaction, for easy reference
-            },
-            'data' : {
-                'signature' : None, # a digital signature certifying that the sender has sent the recipient the coin
-                'recipient' : None, # the public key of the recipient
-                'digest':     None, # the digest (hash) of the preceeding transaction
-            }
-        }
+        # if len(self.wallet) > 0:
+        #     old_digest = self.wallet.pop()
+            
+        #     # find old_txn's blockchain index
+        #     for digest in self.blocks.keys():
+        #         block = self.blocks[digest]
+        #         try:
+        #             prev_txn_index = block['transactions'].index(old_digest)
+        #             break
+        #         except ValueError:
+        #             pass
+        #     txn = {
+        #         # this metadata is not usually part of the transaction, but
+        #         # we include to simplify a few tasks for this toy implementation
+        #         'metadata' : {
+        #             'mined' :          False, # a boolean indicating whether it is a mining transaction
+        #             'sender' :         self.port, # the name (self.port) of the node which created the transaction
+        #             'prev_txn_index' : , # the index of the preceeding transaction, for easy reference
+        #         },
+        #         'data' : {
+        #             'signature' : None, # a digital signature certifying that the sender has sent the recipient the coin
+        #             'recipient' : None, # the public key of the recipient
+        #             'digest':     None, # the digest (hash) of the preceeding transaction
+        #         }
+        #     }
         # should use the function hash_txn_with_recipient()
         return txns
 
