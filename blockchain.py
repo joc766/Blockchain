@@ -109,11 +109,11 @@ class Blockchain():
         ## head looking for non-mining transactions. Make sure to run `verify_txn`
         ## and raise any exceptions that might be caused by `lookup_key`, a function you
         ## should have used in `verify_txn`.
-        curr = self.blocks[self.head]
+        curr = self.blocks.get(self.head)
         while curr:
             for t in curr['txns']:
-                if t.mined:
-                    break
+                if not t['metadata']['mined']:
+                    
                 
             
             
@@ -310,9 +310,16 @@ class Blockchain():
                     self.length = chain_len
                     # Now update the wallet
                     # old head contains the previous head; go back to their intersection
-                    curr = self.blocks[self.head]
-                    while curr is not old_head:
-                        
+                    curr = self.blocks.get(self.head)
+                    while curr and curr != old_head:
+                        for t in curr['transactions']:
+                            # if curr is the recipient then add it to the wallet
+                            if t['data']['recipient'] == self.verify_key:
+                                coin = self.hash_txn(t['data']['recipient'], t['data']['digest'], t['data']['signature'])
+                                self.wallet.append(coin)
+                            # if curr is the sender then get rid of the coin from wallet
+                            elif t['metadata']['sender'] == self.port:
+                                self.wallet.remove(t['data']['digest'])
                         # increment
                         curr = self.blocks.get(curr['header']['parent'])
                     
@@ -359,13 +366,12 @@ class Blockchain():
         ## using the helper functions.
         ##
         ## Returns a boolean.
-        sender_pk = self.lookup_key(txn['metadata']['sender'])
-        if not txn['metadata']['mined']:
-            try:
-                self.verify(sender_pk, txn['data']['digest'], txn['data']['signature'])
-                return True
-            except sender_pk.InvalidSignature:
-                return False
+        try:
+            sender_pk = self.lookup_key(txn['metadata']['sender'])
+            self.verify(sender_pk, txn['data']['digest'], txn['data']['signature'])
+            return True
+        except sender_pk.InvalidSignature:
+            return False
 
 
     def mine( self ):
@@ -382,10 +388,13 @@ class Blockchain():
 
                 ## print some statistics
                 print( 'node {} - length {} - head {}'.format( self.port, self.length, self.head ) )
-                if self.port == 8001:
+                if self.port == 8002:
                     time.sleep( 3 )
                     pp = pprint.PrettyPrinter()
                     pp.pprint( self.blocks )
+                    
+                    for i, coin in enumerate(self.wallet):
+                        print("{}: {}".format(i, coin))
 
                     ## TODO: UNCOMMENT FOR PART 3
                     # self.verify_last_txn()
@@ -453,7 +462,6 @@ if __name__ == '__main__':
         port = 8000 + i
         sk = Ed25519PrivateKey.generate()
         pk = sk.public_key()
-
         pkb = pk.public_bytes( encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw )
         epk = pkb.hex()
 
