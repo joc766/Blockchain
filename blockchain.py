@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 
 # global constants
 NNODES = 6
-DIFFICULTY = 17 # larger number = takes (exponentially) longer to mine
+DIFFICULTY = 10 # larger number = takes (exponentially) longer to mine
 STOPPING   = 8  # how long the chain should get before we stop
 
 
@@ -108,7 +108,6 @@ class Blockchain():
             curr = self.blocks.get(curr['header']['parent'])
         return chain
 
-    # TODO
     def verify_last_txn( self ):
         #####
         ## verify_last_txn implements a transaction chain verification. To do this,
@@ -133,7 +132,7 @@ class Blockchain():
         last_txn = None
         for block in chain:
             for txn in block['transactions']:
-                if not txn['metadata']['mined']: # TODO put verify back
+                if not txn['metadata']['mined'] and self.verify_txn(txn): # lookup_key exception handled in verify_txn() 
                     last_txn = txn
                     last_txn_block_index = block['header']['index']
                     break
@@ -152,9 +151,11 @@ class Blockchain():
                 prev_block = chain[curr_txn['metadata']['prev_txn_index']]
                 for txn in prev_block['transactions']:
                     if txn['data']['digest'] == self.hash_txn(curr_txn['data']['recipient'], curr_txn['data']['digest'], curr_txn['data']['signature']):
-                        #TODO restore verify check
-                        prev_txn = txn
-                        break
+                        if self.verify_txn(txn):
+                            prev_txn = txn
+                            break
+                        else:
+                            raise ValueError("Invalid transaction found during verification")
                 else:
                     curr_txn = prev_txn
         except ValueError as e:
@@ -174,7 +175,6 @@ class Blockchain():
 
 
 
-    # helper functions for TODOs
     def get_timestamp( self ):
         return time.time()
 
@@ -216,7 +216,6 @@ class Blockchain():
         _verify_key = peers[ peer ][ 'pk' ]
         return _verify_key.verify( int( signature, 16 ).to_bytes( 64, sys.byteorder ), int( digest, 16 ).to_bytes( 32, sys.byteorder ) )
 
-    # TODO
     def find_block( self, tries, index, parent, txns ):
         #####
         ## find_block implements mining (aka block creation). You must
@@ -249,9 +248,9 @@ class Blockchain():
                 'prev_txn_index' : None, # the index of the preceeding transaction, for easy reference
             },
             'data' : {
-                'signature' : None, # a digital signature certifying that the sender has sent the recipient the coin
+                'signature' : 0, # a digital signature certifying that the sender has sent the recipient the coin
                 'recipient' : self.verify_key, # the public key of the recipient
-                'digest':     None, # the digest (hash) of the preceeding transaction
+                'digest':    0, # the digest (hash) of the preceeding transaction
             }
         }
 
@@ -278,8 +277,6 @@ class Blockchain():
         # could very reasonably fail with only 1000 tries and 17 difficulty setting
         return ( None, None )
 
-
-    # TODO
     def verify_block( self, block, digest ):
         #####
         ## verify_block implements block verification, for use by `update_head`.
@@ -310,7 +307,6 @@ class Blockchain():
         return True
 
 
-    # TODO
     def update_head( self ):
         #####
         ## update_head implements the consensus mechanism. To do this,
@@ -385,7 +381,6 @@ class Blockchain():
                                         break
             self.pending.task_done()
 
-    # TODO
     def gift_coin( self, txns ):
         #####
         ## gift_coin implements coin sending. You must use the following
@@ -400,50 +395,53 @@ class Blockchain():
         if len(self.wallet) > 0:
             peers_list = list(self.peers.keys())
             i = peers_list.index(self.port)
-            dest = peers_list[ (i + 1) % len(peers_list) ]
-            prev_txn = self.wallet[0] # this is the one we're sending
+            dest = self.lookup_key(peers_list[ (i + 1) % len(peers_list) ])
+            txn = self.wallet[0] # this is the one we're sending
             
             # find old_txn's blockchain index
-            for digest in self.blocks.keys():
-                block = self.blocks[digest]
+            chain = self.get_chain()
+            for block in chain:
                 try:
-                    block['transactions'].index(prev_txn)
+                    block['transactions'].index(txn)
                 except ValueError:
                     continue
                 else:
-                    prev_index = block['header']['index']
+                    block_index = block['header']['index']
                     break
-            
-            # should be able to find the prev transaction location
-            txn = {
+
+            # transaction should always exist in chain
+            # renamed this to new_txn 
+            txn_hash = self.hash_txn(txn['data']['recipient'], txn['data']['digest'], txn['data']['signature'])
+            new_txn = {
                 # this metadata is not usually part of the transaction, but
                 # we include to simplify a few tasks for this toy implementation
                 'metadata' : {
                     'mined' :          False, # a boolean indicating whether it is a mining transaction
                     'sender' :         self.port, # the name (self.port) of the node which created the transaction
-                    'prev_txn_index' : prev_index, # the index of the preceeding transaction, for easy reference
+                    'prev_txn_index' : block_index, # the index of the preceeding transaction, for easy reference
                 },
                 'data' : {
-                    'signature' : self.sign(self.hash_txn_with_recipient(prev_txn, dest)), # a digital signature certifying that the sender has sent the recipient the coin
+                    'signature' : self.sign(self.hash_txn_with_recipient(txn_hash, dest)), # a digital signature certifying that the sender has sent the recipient the coin
                     'recipient' : dest, # the public key of the recipient
-                    'digest':     self.hash_txn(prev_txn['data']['recipient'], prev_txn['data']['digest'], prev_txn['data']['signature']), # the digest (hash) of the preceeding transaction
+                    'digest':     txn_hash, # the digest (hash) of the preceeding transaction
                 }
             }
-            txns.append(txn)
+            txns.append(new_txn)
         # should use the function hash_txn_with_recipient()
         return txns
 
 
-    # TODO
     def verify_txn( self, txn ):
         #####
         ## verify_txn implements transaction verification for Part 3
         ## using the helper functions.
         ##
         ## Returns a boolean.
+        if txn['metadata']['mined']:
+            return True
         try:
             sender_pk = self.lookup_key(txn['metadata']['sender'])
-            self.verify(sender_pk, txn['data']['digest'], txn['data']['signature'])
+            self.verify(sender_pk, self.hash_txn_with_recipient(txn['data']['digest'], txn['data']['recipient']), txn['data']['signature'])
             return True
         except InvalidSignature:
             return False
@@ -469,7 +467,6 @@ class Blockchain():
                     pp.pprint( self.blocks )
                 
 
-                    ## TODO: UNCOMMENT FOR PART 3
                     self.verify_last_txn()
 
                 return
